@@ -1,0 +1,5 @@
+node_modules/
+.env
+data/games.json
+# Character art downloaded on demand by the grimoire renderer.
+data/icon-cache/
