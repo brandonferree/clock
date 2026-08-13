@@ -42,12 +42,27 @@ Discord only lets a bot write a channel permission overwrite for a permission it
 2. Give a player the **Storyteller** role.
 3. **`/game new script:Trouble Brewing`** — posts a join panel in `#town-square`; players click **Join Game**.
 4. **`/game start`** — seats everyone, creates each player's private Storyteller thread under `#town-square`, posts the whisper panel, and begins Night 1.
-5. **`/assign player character`** — Storyteller secretly assigns characters; each is delivered to the player's private Storyteller thread with full ability text.
+5. **`/st deal`** — deal the whole town at random from the official setup table and privately tell every player who they are, all in one command. Or **`/assign player character`** to place characters one at a time. Either way the character is delivered to that player's private Storyteller thread with its full ability text and token art — see [Telling players their character](#telling-players-their-character).
 6. **`/st night-order`** — private night order (first night vs. other nights) for the characters actually in play, with Storyteller reminders from clocktower.online data.
 7. **`/phase day` / `/phase night`** — advance the game; announced in the game log. Night also fires the **night alert** (below).
 8. **`/nominate player`** — any living player nominates; a voting panel with **YES/NO** buttons appears in `#town-square`. Dead players get one final yes-vote (tracked automatically). The Storyteller clicks **Close vote** to tally — the result is logged with the majority threshold.
 9. **`/st kill` / `/st revive`** — record deaths (night kill, execution, other) in the game log.
 10. **`/game end`** — archives all Grimoire and whisper threads and clears the game.
+
+## Telling players their character
+
+A character only ever reaches a player through their private `st-<name>` thread, as a card with the team, the full ability text, the token art, and an `@`-mention so they get a notification. Two commands put it there:
+
+| | |
+|---|---|
+| **`/st deal`** | Deals the **whole town at once**, at random, using the official setup table for the player count, then delivers every character privately. This is the one-command way to run a randomized game. |
+| **`/assign player character`** | Places **one** character on one player and delivers it. Use it for a hand-built setup, or to correct a deal — re-assigning re-delivers, so the player is told about the change. |
+
+`/st deal` refuses to run if anyone already has a character, since a mid-game re-deal would tell the whole town they are somebody new. Pass `redeal:true` if that is genuinely what you want.
+
+Neither applies setup-modifying abilities — a Baron does not add Outsiders, a Drunk is not swapped in. The deal follows the plain setup table, and you adjust with `/assign` afterwards.
+
+If a player's thread cannot be reached (archived beyond recovery, or they left the server), the reply names them explicitly rather than silently skipping, so you know who still needs telling by hand.
 
 ## The night alert
 
@@ -67,6 +82,7 @@ Because characters are usually dealt *after* `/game start`, Night 1's alert only
 ### Other commands
 
 - **`/st remind player token`** / **`/st unremind player token`** — place or remove the script's official reminder tokens (Poisoned, Red herring, Protected, Master…). They appear on the pinned board, in `/st grimoire` (as small tokens next to the character, like the physical grimoire), and autocomplete from the current script — `unremind` only offers tokens the player actually has.
+- **`/st deal`** — randomly deal the whole town and privately tell everyone their character (see above).
 - **`/st night-alert`** — re-fire the night alert: ping every acting player's Storyteller thread and post a fresh wake checklist in `#grimoire`.
 - **`/st refresh`** — force-refresh the pinned Grimoire board (town, characters, deaths, phase, votes needed).
 - **`/st script`** — re-post the full character reference with every ability for the current script.
@@ -105,7 +121,7 @@ You can run a full game by yourself using simulated players (Storyteller only):
 1. `/game new` → click **Join Game** yourself.
 2. **`/test add-bots count:4`** — seats 4 AI placeholders (Alice, Bob, Carol, Dave) so you hit the 5-player minimum.
 3. `/game start` — bots get Storyteller threads too (visible only to you).
-4. **`/test deal`** — randomly deals characters to everyone using the official setup table. Follow with **`/st night-alert`** to see the Night 1 wake list.
+4. **`/test deal`** — randomly deals characters to everyone using the official setup table and delivers each to its thread (identical to `/st deal`, but it never objects to re-dealing, which is handy while testing). Follow with **`/st night-alert`** to see the Night 1 wake list.
 5. `/phase day`, then `/nominate` — use the optional `as:` option to nominate on behalf of a bot.
 6. **`/test vote how:Random`** — makes the bots vote on the open nomination; then click **Close vote**.
 7. `/st kill`, `/phase night`, etc. — all player pickers autocomplete with bots included.

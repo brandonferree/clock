@@ -1,9 +1,10 @@
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getGuild, save } = require('../store');
-const { isStoryteller, seatedChoices, mention, COLORS } = require('../game');
-const { rolesForScript, findRole, iconUrl, TEAM_LABEL } = require('../data/scripts');
+const { isStoryteller, seatedChoices, mention } = require('../game');
+const { rolesForScript, findRole, TEAM_LABEL } = require('../data/scripts');
 const { updateBoard } = require('../grimoire');
 const { updateChecklist } = require('../night');
+const { deliverCharacter } = require('../deal');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -52,27 +53,13 @@ module.exports = {
     player.character = role.id;
     save();
 
-    // Deliver secretly via the player's Grimoire thread.
-    const thread = player.stThreadId && (await interaction.guild.channels.fetch(player.stThreadId).catch(() => null));
-    if (thread) {
-      const isEvil = role.team === 'minion' || role.team === 'demon';
-      await thread.send({
-        content: player.isBot ? undefined : `<@${playerId}>`,
-        embeds: [
-          new EmbedBuilder()
-            .setTitle(`${player.isBot ? `${player.name}, you` : 'You'} are the ${role.name}`)
-            .setColor(isEvil ? COLORS.evil : COLORS.good)
-            .setThumbnail(iconUrl(role))
-            .setDescription(`**${TEAM_LABEL[role.team] ?? role.team}**\n\n${role.ability}`)
-            .setFooter({ text: 'Keep this secret. Ask the Storyteller here if you have questions.' }),
-        ],
-      });
-    }
+    // Deliver secretly via the player's Storyteller thread.
+    const delivered = await deliverCharacter(interaction.guild, game, playerId);
     await updateBoard(interaction.guild);
     // A newly assigned character may act tonight, so keep the wake list honest.
     await updateChecklist(interaction.guild);
     return interaction.reply({
-      content: `Assigned **${role.name}** to ${mention(game, playerId)}${thread ? ' and posted it in their Grimoire thread.' : ' (no Grimoire thread found — tell them directly).'}`,
+      content: `Assigned **${role.name}** to ${mention(game, playerId)}${delivered ? ' and posted it in their Storyteller thread.' : ' — **but their thread could not be reached, so tell them directly.**'}`,
       flags: MessageFlags.Ephemeral,
     });
   },

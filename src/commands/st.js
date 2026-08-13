@@ -5,6 +5,7 @@ const { rolesById, rolesForScript } = require('../data/scripts');
 const { updateBoard, postScriptReference } = require('../grimoire');
 const { renderGrimoire } = require('../render');
 const { nightOrder, postNightAlert, updateChecklist } = require('../night');
+const { dealCharacters } = require('../deal');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -45,6 +46,14 @@ module.exports = {
         .setDescription('Remove a reminder token from a player')
         .addStringOption((o) => o.setName('player').setDescription('Who loses the token').setRequired(true).setAutocomplete(true))
         .addStringOption((o) => o.setName('token').setDescription('The reminder token to remove').setRequired(true).setAutocomplete(true))
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('deal')
+        .setDescription('Randomly deal the whole town and send each player their character privately')
+        .addBooleanOption((o) =>
+          o.setName('redeal').setDescription('Re-deal even though characters are already assigned (default no)')
+        )
     )
     .addSubcommand((s) => s.setName('night-order').setDescription('Show the night order for characters in play (private)'))
     .addSubcommand((s) =>
@@ -202,6 +211,45 @@ module.exports = {
             }),
         ],
       });
+    }
+
+    if (sub === 'deal') {
+      const already = Object.entries(game.players).filter(([, p]) => p.character);
+      if (already.length && !interaction.options.getBoolean('redeal')) {
+        return interaction.reply({
+          content:
+            `⚠️ ${already.length} player${already.length === 1 ? ' already has a character' : 's already have characters'}. ` +
+            'Re-dealing replaces every character and tells everyone their new one, which mid-game would be a mess. ' +
+            'If you really mean it, run `/st deal redeal:true`.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      // One thread message per player, so defer.
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const result = await dealCharacters(interaction.guild, game);
+      if (result.error) return interaction.editReply(result.error);
+
+      await logAction(interaction.guild, {
+        title: '🎲 Characters dealt',
+        description:
+          `The Storyteller has dealt characters (${result.dist.join('/')} townsfolk/outsiders/minions/demon). ` +
+          'Each of you has been told who you are in your private Storyteller thread — go and look.',
+      });
+      await updateBoard(interaction.guild);
+      await updateChecklist(interaction.guild);
+      return interaction.editReply(
+        [
+          `🎲 Dealt **${result.dealt.length}** characters and delivered each one privately:`,
+          result.dealt.map(({ id, role }) => `${mention(game, id)} → **${role.name}**`).join('\n'),
+          result.undelivered.length
+            ? `\n⚠️ Could not reach the Storyteller thread for: ${result.undelivered.map((id) => mention(game, id)).join(', ')} — tell them directly.`
+            : '',
+          '\n*(Setup-modifying abilities like the Baron are not applied — adjust with `/assign`, which re-delivers.)*',
+          game.phase === 'night' ? "Then run `/st night-alert` to ping tonight's actors." : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
     }
 
     if (sub === 'night-alert') {

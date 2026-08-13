@@ -1,22 +1,13 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getGuild, save } = require('../store');
 const { logAction, isStoryteller, mention } = require('../game');
-const { rolesForScript, rolesById, SETUP_TABLE } = require('../data/scripts');
 const { refreshJoinPanel } = require('./game');
 const { voteEmbed } = require('./nominate');
 const { updateBoard } = require('../grimoire');
 const { updateChecklist } = require('../night');
+const { dealCharacters } = require('../deal');
 
 const BOT_NAMES = ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank', 'Grace', 'Heidi', 'Ivan', 'Judy'];
-
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -32,7 +23,9 @@ module.exports = {
     )
     .addSubcommand((s) => s.setName('remove-bots').setDescription('Remove all simulated players from the lobby'))
     .addSubcommand((s) =>
-      s.setName('deal').setDescription('Randomly deal characters to all players using the official setup table')
+      s
+        .setName('deal')
+        .setDescription('Randomly deal characters to everyone (bots included) and send each to their thread')
     )
     .addSubcommand((s) =>
       s
@@ -110,35 +103,31 @@ module.exports = {
       if (game.status !== 'running') {
         return interaction.reply({ content: 'Start the game first with `/game start`.', flags: MessageFlags.Ephemeral });
       }
-      const ids = shuffle(Object.keys(game.players));
-      const dist = SETUP_TABLE[Math.min(Math.max(ids.length, 5), 15)];
-      if (!dist) {
-        return interaction.reply({ content: 'Player count outside 5–15; deal manually with `/assign`.', flags: MessageFlags.Ephemeral });
-      }
-      const pool = rolesForScript(game.script);
-      const byTeam = (team) => shuffle(pool.filter((r) => r.team === team));
-      const deck = [
-        ...byTeam('townsfolk').slice(0, dist[0]),
-        ...byTeam('outsider').slice(0, dist[1]),
-        ...byTeam('minion').slice(0, dist[2]),
-        ...byTeam('demon').slice(0, dist[3]),
-      ];
-      const lines = [];
-      for (let i = 0; i < ids.length && i < deck.length; i++) {
-        game.players[ids[i]].character = deck[i].id;
-        lines.push(`${mention(game, ids[i])} → **${deck[i].name}**`);
-      }
-      save();
+      // Same engine as `/st deal` — it delivers each character to its player's
+      // Storyteller thread, which is N round-trips, so defer.
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const result = await dealCharacters(interaction.guild, game);
+      if (result.error) return interaction.editReply(result.error);
+
       await logAction(interaction.guild, {
         title: '🎲 Characters dealt',
-        description: `The Storyteller dealt characters randomly (${dist[0]}/${dist[1]}/${dist[2]}/${dist[3]}). Check \`/st grimoire\`.`,
+        description: `The Storyteller dealt characters randomly (${result.dist.join('/')}). Check \`/st grimoire\`.`,
       });
       await updateBoard(interaction.guild);
       await updateChecklist(interaction.guild);
-      return interaction.reply({
-        content: `Dealt:\n${lines.join('\n')}\n\n*(Note: no setup-modifying abilities like Baron were applied — adjust with \`/assign\` if needed.)*\n\nRun \`/st night-alert\` to ping tonight's actors.`,
-        flags: MessageFlags.Ephemeral,
-      });
+      return interaction.editReply(
+        [
+          'Dealt and delivered to every Storyteller thread:',
+          result.dealt.map(({ id, role }) => `${mention(game, id)} → **${role.name}**`).join('\n'),
+          result.undelivered.length
+            ? `\n⚠️ Could not reach the thread for: ${result.undelivered.map((id) => mention(game, id)).join(', ')} — tell them directly.`
+            : '',
+          '\n*(No setup-modifying abilities like Baron were applied — adjust with `/assign` if needed.)*',
+          "Run `/st night-alert` to ping tonight's actors.",
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
     }
 
     if (sub === 'vote') {
