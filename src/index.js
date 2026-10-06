@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { Client, Collection, GatewayIntentBits, Events, MessageFlags } = require('discord.js');
 const { handleButton, handleSelect } = require('./interactions');
+const meetups = require('./meetups');
+const { startWebServer } = require('./meetupWeb');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -33,6 +35,8 @@ function explain(err) {
 
 client.once(Events.ClientReady, (c) => {
   console.log(`🕰️ Logged in as ${c.user.tag} — ready to tell some stories.`);
+  meetups.startReminders(c);
+  startWebServer(c);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -43,6 +47,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } else if (interaction.isAutocomplete()) {
       const command = client.commands.get(interaction.commandName);
       if (command?.autocomplete) await command.autocomplete(interaction);
+    } else if (interaction.isButton() && interaction.customId.startsWith('meetup_')) {
+      await meetups.handleButton(interaction);
+    } else if (interaction.isModalSubmit() && interaction.customId.startsWith('meetup_')) {
+      await meetups.handleModal(interaction);
     } else if (interaction.isButton()) {
       await handleButton(interaction);
     } else if (interaction.isUserSelectMenu()) {

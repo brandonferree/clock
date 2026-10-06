@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Meetup Editor</title>
+<style>
+  :root {
+    --bg: #1e1f22; --panel: #2b2d31; --panel2: #232428; --field: #1e1f22; --line: #3f4147;
+    --text: #e3e5e8; --muted: #a0a4ab; --accent: #2fd2e0; --accent-ink: #062b2f;
+    --ok: #3ba55d; --danger: #ed4245; --embed: #2b2d31;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 120px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  header img { width: 40px; height: 40px; border-radius: 50%; }
+  header h1 { margin: 0; font-size: 26px; }
+  header .crumb { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 24px; align-items: start; }
+  @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } .preview-col { position: static !important; } }
+  .card { background: var(--panel); border-left: 4px solid var(--accent); border-radius: 6px; padding: 20px; margin-bottom: 18px; }
+  label.h { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; margin: 18px 0 8px; }
+  label.h:first-child { margin-top: 0; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  input[type=text], input[type=url], input[type=number], input[type=datetime-local], select, textarea {
+    width: 100%; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 5px;
+    padding: 10px 12px; font: inherit; color-scheme: dark;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea { min-height: 110px; resize: vertical; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 180px; }
+  .when-box { background: var(--panel2); border-left: 3px solid var(--ok); border-radius: 4px; padding: 10px 14px; margin-top: 12px; }
+  .when-box b { display: block; }
+  .tabs { display: flex; background: var(--panel2); border-radius: 6px 6px 0 0; overflow-x: auto; }
+  .tabs button { flex: 1; background: none; border: 0; color: var(--muted); padding: 14px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
+  .tabs button[aria-selected=true] { color: var(--text); background: var(--panel); font-weight: 600; }
+  .tabpanel { background: var(--panel); border-left: 4px solid var(--accent); border-radius: 0 0 6px 6px; padding: 20px; margin-bottom: 18px; }
+  .tabpanel[hidden] { display: none; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--text); background: var(--panel2); padding: 8px; font-size: 14px; }
+  td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: middle; }
+  td.emoji input { width: 64px; text-align: center; font-size: 18px; padding: 8px 4px; }
+  td.limit input { width: 90px; }
+  td.count { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 5px; padding: 10px 18px; font: inherit; font-weight: 700; cursor: pointer; }
+  .btn.ghost { background: none; color: var(--accent); padding: 8px 4px; }
+  .btn.small { padding: 6px 10px; font-size: 13px; }
+  .iconbtn { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 18px; padding: 4px 8px; }
+  .iconbtn:hover { color: var(--danger); }
+  .palette { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .palette button { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; font-size: 18px; padding: 2px 6px; cursor: pointer; }
+  .check { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; cursor: pointer; }
+  .check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); }
+  .imgrow { margin-bottom: 14px; }
+  .imgrow .row { align-items: center; flex-wrap: nowrap; }
+  .imgrow .row > input { flex: 1 1 auto; }
+  .imgrow .row > button { flex: 0 0 auto; }
+  .imgprev { margin-top: 10px; max-width: 100%; max-height: 220px; border-radius: 4px; display: none; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 6px; }
+  .mbox { position: relative; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; cursor: text; }
+  .mbox:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .mbox.off { opacity: .55; pointer-events: none; }
+  .mbox input { flex: 1 1 160px; min-width: 120px; background: none; border: 0; color: var(--text); font: inherit; padding: 4px 2px; outline: none; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: rgba(88,101,242,.3); color: #c9cdfb; border-radius: 4px; padding: 3px 4px 3px 8px; font-size: 14px; font-weight: 600; }
+  .chip button { background: none; border: 0; color: inherit; cursor: pointer; font-size: 14px; padding: 0 4px; opacity: .7; }
+  .chip button:hover { opacity: 1; }
+  .suggest { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; max-height: 260px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .suggest[hidden] { display: none; }
+  .suggest div { padding: 8px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  .suggest div small { color: var(--muted); }
+  .suggest div.on, .suggest div:hover { background: var(--line); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+  .notif { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; margin-bottom: 10px; }
+  .notif > b { display: block; margin-bottom: 8px; }
+  .guestadd { display: flex; gap: 8px; flex-wrap: wrap; }
+  .guestadd input { flex: 1 1 200px; }
+  .guestadd select { flex: 0 1 200px; }
+  .guestgroup { margin-top: 14px; }
+  .guestgroup b { font-size: 14px; }
+  .guestlist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .guestlist .chip { background: var(--panel2); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  .dc-content { font-size: 14px; margin-bottom: 8px; word-break: break-word; }
+  .dc-content .m { background: rgba(88,101,242,.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
+  .preview-col { position: sticky; top: 16px; }
+  .preview-col h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  .dc { background: #313338; border-radius: 6px; padding: 14px; }
+  .dc-embed { background: var(--embed); border-left: 4px solid #8b1e2d; border-radius: 4px; padding: 12px 14px; }
+  .dc-title { font-weight: 700; margin-bottom: 6px; word-break: break-word; }
+  .dc-desc { white-space: pre-wrap; font-size: 14px; word-break: break-word; }
+  .dc-desc a { color: #00a8fc; text-decoration: none; }
+  .dc-desc a:hover { text-decoration: underline; }
+  .dc-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .dc-field b { display: block; font-size: 13px; }
+  .dc-field span { color: var(--muted); font-size: 13px; }
+  .dc-gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 10px; }
+  .dc-gallery:empty { display: none; }
+  .dc-gallery img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; display: block; }
+  .dc-gallery.n1 { grid-template-columns: 1fr; }
+  .dc-gallery.n1 img { height: auto; }
+  .dc-gallery.n2 img, .dc-gallery.n4 img { aspect-ratio: 1; }
+  .dc-gallery.n3 { grid-template-rows: 1fr 1fr; }
+  .dc-gallery.n3 img { aspect-ratio: 1; }
+  .dc-gallery.n3 img:first-child { grid-row: span 2; aspect-ratio: auto; }
+  .dc-foot { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .dc-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .dc-buttons span { background: #4e5058; border-radius: 3px; padding: 5px 12px; font-size: 13px; }
+  .dc-buttons span.first { background: #248046; }
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(30,31,34,.96); border-top: 1px solid var(--line); padding: 12px 16px; }
+  .savebar .inner { max-width: 1180px; margin: 0 auto; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  #status { flex: 1; min-width: 200px; }
+  #status.bad { color: var(--danger); } #status.good { color: var(--ok); }
+  .fatal { max-width: 560px; margin: 80px auto; background: var(--panel); padding: 28px; border-radius: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app" hidden>
+  <header>
+    <img id="gicon" alt="" hidden>
+    <div>
+      <div class="crumb"><span id="gname"></span> › Meetups</div>
+      <h1 id="heading">New meetup</h1>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <label class="h" for="title">🏷️ Event Title</label>
+        <input type="text" id="title" maxlength="200" placeholder="Blood on the Clocktower">
+
+        <label class="h" for="local">🕒 Start Time <span class="hint" style="font-weight:400;margin:0">(Pacific time)</span></label>
+        <input type="datetime-local" id="local">
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label for="dur" class="hint" style="display:block;margin:0 0 4px">Duration</label>
+            <select id="dur">
+              <option value="30">30 minutes</option><option value="60">1 hour</option><option value="90">1½ hours</option>
+              <option value="120">2 hours</option><option value="150">2½ hours</option><option value="180">3 hours</option>
+              <option value="240">4 hours</option><option value="300">5 hours</option><option value="360">6 hours</option>
+              <option value="480">8 hours</option><option value="720">12 hours</option><option value="1440">All day</option>
+            </select>
+          </div>
+        </div>
+        <div class="when-box" id="whenbox"><b>Event Time</b><span id="whentext">Pick a date and time.</span></div>
+
+        <label class="h" for="channel"># Channel</label>
+        <select id="channel"></select>
+
+        <label class="h" for="desc">☰ Description</label>
+        <textarea id="desc" maxlength="3000" placeholder="Looking for a group to play… Beginners welcome!"></textarea>
+
+        <label class="h" for="loc">📍 Location</label>
+        <input type="text" id="loc" placeholder="1211 SW 5th Ave, Portland, OR — or a voice channel, or a link">
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="rsvps" aria-selected="true">☑️ RSVPs</button>
+        <button role="tab" data-tab="notify" aria-selected="false">🔔 Notifications</button>
+        <button role="tab" data-tab="look" aria-selected="false">🎨 Appearance</button>
+        <button role="tab" data-tab="people" aria-selected="false">👥 Attendees</button>
+      </div>
+
+      <section class="tabpanel" id="tab-rsvps">
+        <div class="row" style="align-items:center;margin-bottom:10px">
+          <b style="flex:0 0 auto;font-size:17px">RSVP Options</b>
+          <select id="preset" style="flex:0 1 260px;margin-left:auto">
+            <option value="">Load a preset…</option>
+            <option value="✅ Going, 🤔 Maybe, ❌ Not going">Going / Maybe / Not going</option>
+            <option value="🎲 Playing, 👀 Spectating, 🤔 Maybe, ❌ Can't make it">Playing / Spectating / Maybe / Can't</option>
+            <option value="✅ Attendees">Attendees only</option>
+            <option value="👍 Yes, 👎 No">Yes / No</option>
+            <option value="✅ On time, 🕒 Running late, 🤔 Maybe, ❌ Not going">On time / Late / Maybe / Not going</option>
+          </select>
+        </div>
+        <table>
+          <thead><tr><th>Emoji</th><th>Name</th><th>Limit</th><th></th><th></th></tr></thead>
+          <tbody id="opts"></tbody>
+        </table>
+        <button class="btn ghost" id="addopt" type="button">＋ Add signup option</button>
+        <div class="hint">Leave Limit empty for no cap. When an option is full, extra sign-ups join a waitlist and move up automatically. Click a box in the Emoji column, then click an emoji below (or type any emoji, or a server emoji like &lt;:name:id&gt;).</div>
+        <div class="palette" id="palette"></div>
+      </section>
+
+      <section class="tabpanel" id="tab-notify" hidden>
+        <div class="notif">
+          <b>📣 Mentions when posted</b>
+          <div class="mbox" id="m-create"></div>
+          <div class="hint" id="mentionhint">Type <b>@</b> to pick roles, people, @everyone or @here. Pinged once, when the meetup is first posted.</div>
+        </div>
+        <div class="notif">
+          <b>🔔 Mentions when it starts</b>
+          <div class="mbox" id="m-start"></div>
+          <div class="hint">Pinged along with everyone who signed up when the meetup starts.</div>
+        </div>
+        <div class="notif">
+          <label for="remind"><b>⏰ Reminder</b></label>
+          <select id="remind">
+            <option value="0">No reminder</option><option value="15">15 minutes before</option><option value="30">30 minutes before</option>
+            <option value="60">1 hour before</option><option value="120">2 hours before</option><option value="360">6 hours before</option>
+            <option value="1440">1 day before</option><option value="2880">2 days before</option>
+          </select>
+          <div class="hint">Pings everyone who signed up (except "not going"-type answers) in the event channel.</div>
+        </div>
+        <div class="notif">
+          <label for="role"><b>🔒 Add role to attendees</b></label>
+          <select id="role"><option value="">Disabled</option></select>
+          <div class="row" style="margin-top:10px;align-items:center">
+            <label for="rolewhen" class="hint" style="flex:0 0 auto;margin:0">Add role</label>
+            <select id="rolewhen" style="flex:0 1 220px">
+              <option value="rsvp">when they sign up</option>
+              <option value="start">when the event starts</option>
+            </select>
+            <label class="check" style="flex:1 1 220px;margin:0"><input type="checkbox" id="roleend" checked><span>Remove role when the event ends</span></label>
+          </div>
+          <div class="hint" id="rolehint">Attendees are everyone signed up except "not going"-type answers. The role comes off if they change their answer. People who already had the role keep it.</div>
+        </div>
+      </section>
+
+      <section class="tabpanel" id="tab-look" hidden>
+        <label class="h">🖼️ Images</label>
+        <div id="images"></div>
+        <button class="btn ghost" id="addimg" type="button">＋ Add another image</button>
+        <div class="hint">Right-click any picture on the web → <b>Copy image address</b>, then paste it here. Up to 4; more than one shows as a gallery.</div>
+        <label class="h" for="color">🎨 Colour</label>
+        <div class="row" style="align-items:center">
+          <input type="color" id="color" value="#8b1e2d" style="flex:0 0 60px;height:42px;background:none;border:0">
+          <button class="btn ghost small" id="colorreset" type="button" style="flex:0 0 auto">Reset to default</button>
+        </div>
+      </section>
+
+      <section class="tabpanel" id="tab-people" hidden>
+        <label class="check"><input type="checkbox" id="multi"><span><b>Allow multiple choices</b><br><span class="hint">People can pick more than one option at once (e.g. "Playing" and "Bringing snacks").</span></span></label>
+        <label class="check"><input type="checkbox" id="hide"><span><b>Hide attendee names</b><br><span class="hint">The post shows only counts. You can still download the full list from ⚙️.</span></span></label>
+
+        <label class="h" for="guestname">🧑‍🤝‍🧑 Guests</label>
+        <div class="hint" style="margin:0 0 8px">Add people who aren't on Discord so they're counted. Guests take up spots toward an option's limit but are never pinged or given roles.</div>
+        <div class="guestadd">
+          <input type="text" id="guestname" maxlength="300" placeholder="Name (or several, separated by commas)">
+          <select id="guestopt" aria-label="Which option"></select>
+          <button class="btn" id="guestaddbtn" type="button">Add</button>
+        </div>
+        <div id="guests"></div>
+      </section>
+    </div>
+
+    <aside class="preview-col">
+      <h2>Preview in Discord</h2>
+      <div class="dc">
+        <div class="dc-content" id="pvcontent" hidden></div>
+        <div class="dc-embed" id="pv">
+          <div class="dc-title" id="pvtitle"></div>
+          <div class="dc-desc" id="pvdesc"></div>
+          <div class="dc-fields" id="pvfields"></div>
+          <div class="dc-gallery" id="pvimgs"></div>
+          <div class="dc-foot" id="pvfoot"></div>
+        </div>
+        <div class="dc-buttons" id="pvbtns"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="savebar" id="savebar" hidden>
+  <div class="inner">
+    <span id="status"></span>
+    <a id="viewlink" href="#" target="_blank" rel="noopener" hidden>View in Discord ↗</a>
+    <button class="btn" id="save" type="button">Post meetup</button>
+  </div>
+</div>
+
+<div class="fatal" id="fatal" hidden></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  // The link's token moves into memory and off the address bar so it is not
+  // left in browser history or shared by copying the URL.
+  const params = new URLSearchParams(location.search);
+  let token = params.get('t') || sessionStorageGet('meetupToken');
+  if (params.get('t')) { sessionStorageSet('meetupToken', token); history.replaceState(null, '', location.pathname); }
+  function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
+  function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch {} }
+
+  let ctx = null;
+  let eventId = null;
+  let dirty = false;
+  let lastFocusedEmoji = null;
+  const DEFAULT_COLOR = '#8b1e2d';
+  let colorSet = false;
+
+  const fatal = (msg) => { $('fatal').hidden = false; $('fatal').innerHTML = '<h2>🕰️ Meetup editor</h2><p></p>'; $('fatal').querySelector('p').textContent = msg; };
+  if (!token) return fatal('Open this page from the link the bot gives you: use /meetup web in Discord.');
+
+  async function api(method, body) {
+    const res = await fetch('/api/meetup', {
+      method, headers: { 'Content-Type': 'application/json', 'X-Meetup-Token': token },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({ error: 'The bot sent back something unexpected.' }));
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  // ------------------------------------------------------------ time ----
+  function wallParts(ms, tz) {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+    return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+  }
+  function offsetMin(tz, ms) {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+    return Math.round((Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - ms) / 60000);
+  }
+  function toUtc(local, tz) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local || '');
+    if (!m) return null;
+    const guess = Date.UTC(m[1], m[2] - 1, m[3], m[4], m[5]);
+    let ms = guess - offsetMin(tz, guess) * 60000;
+    return guess - offsetMin(tz, ms) * 60000;
+  }
+  const fmt = (ms, tz, opts) => new Intl.DateTimeFormat('en-US', { timeZone: tz, ...opts }).format(new Date(ms));
+  function relative(ms) {
+    const diff = ms - Date.now();
+    const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+    const abs = Math.abs(diff);
+    if (abs < 3600e3) return rtf.format(Math.round(diff / 60e3), 'minute');
+    if (abs < 86400e3) return rtf.format(Math.round(diff / 3600e3), 'hour');
+    return rtf.format(Math.round(diff / 86400e3), 'day');
+  }
+  const TZ = 'America/Los_Angeles';
+  function updateWhen() {
+    const tz = ctx?.timezone || TZ;
+    const ms = toUtc($('local').value, tz);
+    if (!ms) { $('whentext').textContent = 'Pick a date and time.'; return null; }
+    const t = (z) => fmt(ms, z, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+    const day = fmt(ms, tz, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    const mine = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    let s = `${t(tz)} / ${t('UTC')} on ${day} (${relative(ms)})`;
+    if (mine !== tz) s += ` — that's ${t(mine)} ${fmt(ms, mine, { weekday: 'short' })} for you`;
+    if (ms < Date.now()) s += ' ⚠️ this is in the past';
+    $('whentext').textContent = s;
+    return ms;
+  }
+
+  // ---------------------------------------------------------- options ----
+  const PALETTE = ['✅','❌','🤔','❓','👍','👎','🎲','🎮','👀','🍕','🍺','☕','🎉','🕒','🚗','🏠','💻','🎧','📝','⭐','🔥','💀','😈','😇','🧙','🗡️','🩸','🕯️','⏳','🟢','🔴','🟡','🔵'];
+  function addOptionRow(o = {}) {
+    const tr = document.createElement('tr');
+    tr.dataset.from = Number.isInteger(o.from) ? o.from : '';
+    tr.dataset.members = o.members || 0;
+    tr._guests = [...(o.guests || [])];
+    tr.innerHTML = `<td class="emoji"><input type="text" maxlength="64" aria-label="Emoji"></td>
+      <td><input type="text" maxlength="80" aria-label="Name" placeholder="Option name"></td>
+      <td class="limit"><input type="number" min="1" max="999" placeholder="∞" aria-label="Limit"></td>
+      <td class="count"></td>
+      <td><button class="iconbtn" type="button" title="Remove option" aria-label="Remove option">✕</button></td>`;
+    const [emoji, label, limit] = tr.querySelectorAll('input');
+    emoji.value = o.emoji || ''; label.value = o.label || ''; limit.value = o.limit || '';
+    tr.querySelector('.count').textContent = o.count ? `${o.count} signed up` : '';
+    emoji.addEventListener('focus', () => { lastFocusedEmoji = emoji; });
+    tr.querySelector('button').addEventListener('click', () => {
+      const n = (o.count || 0) + tr._guests.length;
+      if (n && !confirm(`${n} people are down for "${o.label}". Remove it and drop them?`)) return;
+      tr.remove(); changed();
+    });
+    $('opts').appendChild(tr);
+    return tr;
+  }
+  function readOptions() {
+    return [...$('opts').children].map((tr) => {
+      const [emoji, label, limit] = tr.querySelectorAll('input');
+      return { emoji: emoji.value.trim(), label: label.value.trim(), limit: limit.value ? Number(limit.value) : null, from: tr.dataset.from === '' ? null : Number(tr.dataset.from), guests: tr._guests, members: Number(tr.dataset.members) };
+    }).filter((o) => o.label);
+  }
+
+  // ----------------------------------------------------------- guests ----
+  function renderGuests() {
+    const rows = [...$('opts').children].filter((tr) => tr.querySelectorAll('input')[1].value.trim());
+    const name = (tr) => { const [e, l] = tr.querySelectorAll('input'); return `${e.value.trim() ? e.value.trim() + ' ' : ''}${l.value.trim()}`; };
+    const sel = $('guestopt');
+    const keep = sel.selectedIndex;
+    sel.innerHTML = '';
+    rows.forEach((tr, i) => sel.add(new Option(name(tr), i)));
+    sel.selectedIndex = keep >= 0 && keep < rows.length ? keep : 0;
+    $('guests').innerHTML = '';
+    for (const tr of rows) {
+      if (!tr._guests.length) continue;
+      const g = document.createElement('div');
+      g.className = 'guestgroup';
+      g.innerHTML = '<b></b><div class="guestlist"></div>';
+      g.querySelector('b').textContent = `${name(tr)} (${tr._guests.length})`;
+      for (const guest of tr._guests) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = '<span></span><button type="button" aria-label="Remove guest">✕</button>';
+        chip.firstChild.textContent = guest;
+        chip.querySelector('button').addEventListener('click', () => { tr._guests = tr._guests.filter((x) => x !== guest); changed(); });
+        g.querySelector('.guestlist').appendChild(chip);
+      }
+      $('guests').appendChild(g);
+    }
+    if (!rows.some((tr) => tr._guests.length)) $('guests').innerHTML = '<div class="hint" style="margin-top:12px">No guests yet.</div>';
+    return rows;
+  }
+  function addGuests() {
+    const rows = renderGuests();
+    const tr = rows[$('guestopt').value];
+    const names = $('guestname').value.split(',').map((n) => n.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!tr || !names.length) return;
+    for (const n of names) if (!tr._guests.includes(n)) tr._guests.push(n);
+    $('guestname').value = '';
+    $('guestname').focus();
+    changed();
+  }
+  function parsePreset(text) {
+    return text.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
+      const first = s.split(/\s+/)[0];
+      const isEmoji = first && !/[\p{L}\p{N}]/u.test(first);
+      return { emoji: isEmoji ? first : '', label: isEmoji ? s.slice(first.length).trim() : s };
+    });
+  }
+
+  // ---------------------------------------------------------- preview ----
+  function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  // Just enough of Discord's formatting for the preview: links, bold, italics.
+  function discordMarkdown(text) {
+    const kept = [];
+    const keep = (html) => `\u0000${kept.push(html) - 1}\u0000`;
+    const link = (href, label) => keep(`<a href="${href}" target="_blank" rel="noopener">${label}</a>`);
+    let h = esc(text)
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => link(u, t))
+      .replace(/https?:\/\/[^\s<]*[^\s<.,:;"')\]]/g, (u) => link(u, u));
+    h = h
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>')
+      .replace(/__(.+?)__/g, '<u>$1</u>');
+    return h.replace(/\u0000(\d+)\u0000/g, (_, i) => kept[i]);
+  }
+  function renderPreview() {
+    const ms = updateWhen();
+    const mine = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const dur = Number($('dur').value);
+    $('pv').style.borderLeftColor = colorSet ? $('color').value : DEFAULT_COLOR;
+    $('pvtitle').textContent = $('title').value || 'Untitled meetup';
+    const lines = [];
+    if (ms) {
+      lines.push(`🗓️ ${fmt(ms, mine, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })} – ${fmt(ms + dur * 60e3, mine, { hour: 'numeric', minute: '2-digit' })}`);
+      lines.push(`⏳ ${relative(ms)}`);
+    }
+    if ($('loc').value.trim()) lines.push(`📍 ${$('loc').value.trim()}`);
+    if ($('desc').value.trim()) lines.push('', $('desc').value.trim());
+    $('pvdesc').innerHTML = discordMarkdown(lines.join('\n'));
+    const opts = readOptions();
+    const label = (o) => `${o.emoji ? o.emoji + ' ' : ''}${o.label}`;
+    const names = (o) => {
+      if ($('hide').checked) return '<i>names hidden</i>';
+      const list = [...(o.members ? [`${o.members} member${o.members === 1 ? '' : 's'}`] : []), ...o.guests.map((g) => `${esc(g)} <i>(guest)</i>`)];
+      return list.join('<br>') || '—';
+    };
+    $('pvfields').innerHTML = opts.map((o) => `<div class="dc-field"><b>${esc(label(o))} (${o.members + o.guests.length}${o.limit ? '/' + o.limit : ''})</b><span>${names(o)}</span></div>`).join('');
+    renderGuests();
+    $('pvbtns').innerHTML = opts.map((o, i) => `<span class="${i === 0 ? 'first' : ''}">${esc(label(o))}</span>`).join('') + '<span>⚙️</span><span>Add to Google Calendar ↗</span>';
+    const loaded = [...$('images').querySelectorAll('img.imgprev')].filter((i) => i.dataset.ok === '1').map((i) => i.src);
+    $('pvimgs').className = `dc-gallery n${loaded.length}`;
+    $('pvimgs').replaceChildren(...loaded.map((src) => Object.assign(document.createElement('img'), { src, alt: '' })));
+    const pings = eventId || !mentionBoxes.create ? [] : mentionBoxes.create.labels();
+    $('pvcontent').hidden = !pings.length;
+    $('pvcontent').innerHTML = pings.map((l) => `<span class="m">${esc(l)}</span>`).join(' ') + ' — new meetup!';
+    $('pvfoot').textContent = `Hosted by ${ctx?.user.name ?? ''} · times show in your own timezone`;
+  }
+
+  function changed() { dirty = true; renderPreview(); }
+
+  // ------------------------------------------------------------- load ----
+  async function init() {
+    const { ok, data } = await api('GET');
+    if (!ok) return fatal(data.error || 'Could not load.');
+    ctx = data;
+    $('app').hidden = false; $('savebar').hidden = false;
+    $('gname').textContent = ctx.guild.name;
+    if (ctx.guild.icon) { $('gicon').src = ctx.guild.icon; $('gicon').hidden = false; }
+
+    let lastCat;
+    let group = $('channel');
+    for (const c of ctx.channels) {
+      if (c.category !== lastCat) { group = document.createElement('optgroup'); group.label = c.category || 'No category'; $('channel').appendChild(group); lastCat = c.category; }
+      group.appendChild(new Option(`# ${c.name}`, c.id));
+    }
+    if (!ctx.channels.length) $('channel').add(new Option('No channels I can post in', ''));
+
+    mentionBoxes.create = mentionBox($('m-create'));
+    mentionBoxes.start = mentionBox($('m-start'));
+    setupRoles(ctx.event?.roleAssign);
+
+    for (const e of PALETTE) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = e;
+      b.addEventListener('click', () => {
+        const target = lastFocusedEmoji && document.contains(lastFocusedEmoji) ? lastFocusedEmoji : [...$('opts').querySelectorAll('td.emoji input')].find((i) => !i.value);
+        if (target) { target.value = e; changed(); }
+      });
+      $('palette').appendChild(b);
+    }
+
+    const ev = ctx.event;
+    if (ev) {
+      eventId = ev.id;
+      document.title = `Edit ${ev.title}`;
+      $('heading').innerHTML = 'Editing <i></i>'; $('heading').querySelector('i').textContent = ev.title;
+      $('title').value = ev.title; $('desc').value = ev.description || ''; $('loc').value = ev.location || '';
+      (ev.images || []).forEach((u) => addImageRow(u));
+      if (ev.color) { $('color').value = ev.color; colorSet = true; }
+      $('local').value = wallParts(ev.start, ctx.timezone);
+      if (![...$('dur').options].some((o) => Number(o.value) === ev.duration)) $('dur').add(new Option(`${Math.floor(ev.duration / 60)}h ${ev.duration % 60}m`, ev.duration));
+      $('dur').value = String(ev.duration);
+      $('channel').value = ev.channelId;
+      if (![...$('remind').options].some((o) => Number(o.value) === ev.remind)) $('remind').add(new Option(`${ev.remind} minutes before`, ev.remind));
+      $('remind').value = String(ev.remind);
+      $('multi').checked = ev.multi; $('hide').checked = ev.hideAttendees;
+      ev.options.forEach(addOptionRow);
+      mentionBoxes.create.set(ev.mentions.create); mentionBoxes.create.disable();
+      $('mentionhint').textContent = 'Already posted, so these were pinged then and can\'t be changed.';
+      mentionBoxes.start.set(ev.mentions.start);
+      $('save').textContent = 'Save changes';
+      $('viewlink').href = ev.url; $('viewlink').hidden = false;
+    } else {
+      $('dur').value = '120'; $('remind').value = '60';
+      ctx.defaultOptions.forEach((o) => addOptionRow(o));
+      // Next Saturday at 7pm Pacific, as a starting point.
+      const now = new Date(); const d = new Date(now); d.setDate(now.getDate() + ((6 - now.getDay() + 7) % 7 || 7));
+      $('local').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T19:00`;
+    }
+    if (!$('images').children.length) addImageRow();
+    renderPreview();
+    dirty = false;
+  }
+
+  // --------------------------------------------------------- mentions ----
+  // A chip box: type @ (or just a name) and pick from @everyone/@here, roles,
+  // and server members found by the bot.
+  const mentionBoxes = {};
+  function mentionBox(el) {
+    let chips = [];
+    let items = [];
+    let at = 0;
+    let seq = 0;
+    el.innerHTML = '<input type="text" placeholder="Type @ to mention someone" aria-label="Add a mention"><div class="suggest" hidden></div>';
+    const input = el.querySelector('input');
+    const list = el.querySelector('.suggest');
+    el.addEventListener('click', (e) => { if (e.target === el) input.focus(); });
+    function draw() {
+      el.querySelectorAll('.chip').forEach((c) => c.remove());
+      for (const c of chips) {
+        const span = document.createElement('span');
+        span.className = 'chip';
+        span.innerHTML = '<span></span><button type="button" aria-label="Remove">✕</button>';
+        span.firstChild.textContent = c.label;
+        span.querySelector('button').addEventListener('click', () => { chips = chips.filter((x) => x !== c); draw(); changed(); });
+        el.insertBefore(span, input);
+      }
+    }
+    function add(c) {
+      if (!chips.some((x) => x.token === c.token)) chips.push(c);
+      input.value = ''; hide(); draw(); changed(); input.focus();
+    }
+    function hide() { list.hidden = true; items = []; }
+    function show() {
+      list.innerHTML = '';
+      if (!items.length) return hide();
+      items.forEach((it, i) => {
+        const d = document.createElement('div');
+        if (i === at) d.className = 'on';
+        if (it.color) { const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = it.color === '#000000' ? '#99aab5' : it.color; d.appendChild(dot); }
+        d.appendChild(document.createTextNode(it.label));
+        if (it.sub) { const sm = document.createElement('small'); sm.textContent = it.sub; d.appendChild(sm); }
+        d.addEventListener('mousedown', (e) => { e.preventDefault(); add(it); });
+        list.appendChild(d);
+      });
+      list.hidden = false;
+    }
+    async function search() {
+      const raw = input.value.trim();
+      if (!raw) return hide();
+      const q = raw.replace(/^@/, '').toLowerCase();
+      const local = [];
+      if (ctx.canEveryone) {
+        for (const k of ['everyone', 'here']) if (k.startsWith(q)) local.push({ token: k, label: `@${k}`, sub: k === 'here' ? 'people online' : 'the whole server' });
+      }
+      for (const r of ctx.roles) if (r.name.toLowerCase().includes(q)) local.push({ token: `role:${r.id}`, label: `@${r.name}`, color: r.color, sub: 'role' });
+      items = local.filter((it) => !chips.some((c) => c.token === it.token)).slice(0, 8);
+      at = 0; show();
+      if (!q) return;
+      const mine = ++seq;
+      const res = await fetch(`/api/meetup/members?q=${encodeURIComponent(q)}`, { headers: { 'X-Meetup-Token': token } }).catch(() => null);
+      const people = res && res.ok ? await res.json() : [];
+      if (mine !== seq || input.value.trim() !== raw) return;
+      items = items.concat(people.map((m) => ({ token: `user:${m.id}`, label: `@${m.name}`, sub: m.user }))
+        .filter((it) => !chips.some((c) => c.token === it.token))).slice(0, 12);
+      show();
+    }
+    let timer;
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 150); });
+    input.addEventListener('blur', () => setTimeout(hide, 100));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !input.value && chips.length) { chips.pop(); draw(); changed(); return; }
+      if (list.hidden) return;
+      if (e.key === 'ArrowDown') { at = (at + 1) % items.length; show(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { at = (at - 1 + items.length) % items.length; show(); e.preventDefault(); }
+      else if (e.key === 'Enter' || e.key === 'Tab') { if (items[at]) { add(items[at]); e.preventDefault(); } }
+      else if (e.key === 'Escape') hide();
+    });
+    return {
+      set(list2) { chips = [...(list2 || [])]; draw(); },
+      tokens: () => chips.map((c) => c.token),
+      labels: () => chips.map((c) => c.label),
+      disable() { el.classList.add('off'); input.disabled = true; },
+    };
+  }
+
+  function setupRoles(current) {
+    const sel = $('role');
+    for (const r of ctx.assign.roles) sel.add(new Option(`@${r.name}`, r.id));
+    if (current && !ctx.assign.roles.some((r) => r.id === current.roleId)) sel.add(new Option(`@${current.roleName}`, current.roleId));
+    if (current) {
+      sel.value = current.roleId;
+      $('rolewhen').value = current.when;
+      $('roleend').checked = current.removeAtEnd;
+    }
+    if (ctx.assign.reason) {
+      $('rolehint').textContent = `🔒 ${ctx.assign.reason}` + (current ? ' You can still change when it is added or removed.' : '');
+      if (!current) sel.disabled = true;
+    }
+    const sync = () => { const off = !sel.value; $('rolewhen').disabled = off; $('roleend').disabled = off; };
+    sel.addEventListener('change', () => { sync(); changed(); });
+    sync();
+  }
+
+  // ----------------------------------------------------------- images ----
+  const maxImages = () => ctx?.maxImages || 4;
+  function addImageRow(url = '') {
+    const div = document.createElement('div');
+    div.className = 'imgrow';
+    div.innerHTML = `<div class="row"><input type="url" placeholder="https://…/picture.png" aria-label="Image link">
+        <button class="iconbtn" type="button" title="Remove image" aria-label="Remove image">✕</button></div>
+      <div class="err" hidden>That link didn't load as an image. Make sure you copied the image address, not the page address.</div>
+      <img class="imgprev" alt="Image preview">`;
+    const input = div.querySelector('input');
+    const err = div.querySelector('.err');
+    const img = div.querySelector('img');
+    const check = () => {
+      const u = input.value.trim();
+      err.hidden = true; img.style.display = 'none'; img.dataset.ok = '';
+      if (!u) { img.removeAttribute('src'); return renderPreview(); }
+      img.onload = () => { img.style.display = 'block'; img.dataset.ok = '1'; renderPreview(); };
+      img.onerror = () => { err.hidden = false; renderPreview(); };
+      img.src = u;
+    };
+    let timer;
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(check, 400); dirty = true; });
+    div.querySelector('button').addEventListener('click', () => {
+      div.remove();
+      if (!$('images').children.length) addImageRow();
+      updateAddImg(); changed();
+    });
+    input.value = url;
+    $('images').appendChild(div);
+    if (url) check();
+    updateAddImg();
+    return input;
+  }
+  function updateAddImg() { $('addimg').hidden = $('images').children.length >= maxImages(); }
+  function readImages() { return [...$('images').querySelectorAll('input')].map((i) => i.value.trim()).filter(Boolean); }
+
+  // ----------------------------------------------------------- events ----
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
+    document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.id !== `tab-${b.dataset.tab}`; });
+  }));
+  for (const id of ['title', 'local', 'dur', 'channel', 'desc', 'loc', 'remind', 'rolewhen', 'roleend', 'multi', 'hide']) {
+    $(id).addEventListener('input', changed); $(id).addEventListener('change', changed);
+  }
+  $('opts').addEventListener('input', changed);
+  $('guestaddbtn').addEventListener('click', addGuests);
+  $('guestname').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addGuests(); } });
+  $('addopt').addEventListener('click', () => { if ($('opts').children.length >= 10) return alert('At most 10 options.'); addOptionRow().querySelectorAll('input')[1].focus(); changed(); });
+  $('preset').addEventListener('change', () => {
+    const v = $('preset').value; $('preset').value = '';
+    if (!v) return;
+    const hasPeople = [...$('opts').children].some((tr) => tr.querySelector('.count').textContent);
+    if (hasPeople && !confirm('Replace the current options? People who already signed up will be dropped.')) return;
+    $('opts').innerHTML = ''; parsePreset(v).forEach((o) => addOptionRow(o)); changed();
+  });
+  $('addimg').addEventListener('click', () => { if ($('images').children.length < maxImages()) addImageRow().focus(); });
+  $('color').addEventListener('input', () => { colorSet = true; changed(); });
+  $('colorreset').addEventListener('click', () => { colorSet = false; $('color').value = DEFAULT_COLOR; changed(); });
+  window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+  $('save').addEventListener('click', async () => {
+    const status = $('status');
+    status.className = ''; status.textContent = 'Saving…';
+    $('save').disabled = true;
+    const body = {
+      title: $('title').value, local: $('local').value, duration: Number($('dur').value),
+      channelId: $('channel').value, description: $('desc').value, location: $('loc').value,
+      images: readImages(), color: colorSet ? $('color').value : null, options: readOptions(),
+      multi: $('multi').checked, hideAttendees: $('hide').checked, remind: Number($('remind').value),
+      mentions: { create: mentionBoxes.create.tokens(), start: mentionBoxes.start.tokens() },
+      roleAssign: $('role').value ? { roleId: $('role').value, when: $('rolewhen').value, removeAtEnd: $('roleend').checked } : null,
+    };
+    try {
+      const { ok, data } = await api('POST', body);
+      if (!ok) { status.className = 'bad'; status.textContent = `⚠️ ${data.error}`; return; }
+      dirty = false;
+      status.className = 'good';
+      status.textContent = eventId ? '✅ Saved — the post in Discord is updated.' : '✅ Posted to Discord!';
+      $('viewlink').href = data.url; $('viewlink').hidden = false;
+      if (!eventId && data.editToken) {
+        // Carry on as an edit of the meetup we just made, so a second click
+        // updates it instead of posting a duplicate.
+        token = data.editToken; sessionStorageSet('meetupToken', token);
+        setTimeout(() => location.reload(), 1200);
+      }
+    } catch {
+      status.className = 'bad'; status.textContent = '⚠️ Could not reach the bot. Is it still running?';
+    } finally {
+      $('save').disabled = false;
+    }
+  });
+
+  init().catch(() => fatal('Could not reach the bot. Is it running?'));
+})();
+</script>
+</body>
+</html>

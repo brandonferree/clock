@@ -91,6 +91,28 @@ Because characters are usually dealt *after* `/game start`, Night 1's alert only
 - **`/game status`** — who's alive, current phase, script.
 - **`/st grimoire`** — Storyteller-only view of every player's character and life status, with a rendered picture of the board.
 
+## Scheduling meetups
+
+A Sesh-style event scheduler for game nights (or anything else).
+
+- **`/meetup create title when`** — posts an event card with RSVP buttons. `when` takes plain English: `friday 8pm`, `tomorrow 7:30pm`, `oct 12 6pm`, `2026-10-20 19:00`, always read as **Pacific time**. Times are shown to everyone in **their own** timezone. `image` takes up to 4 links separated by spaces; more than one shows as a gallery.
+  - **RSVP buttons** — pick a `preset` (Going/Maybe/Not going, Playing/Spectating/Maybe/Can't, Yes/No, On time/Late) or type your own in `options`: `✅ Playing (12), 👀 Watching, 🤔 Maybe, ❌ Out`. Up to 10 options; server custom emoji work too. `(12)` caps an option — extra sign-ups join a **waitlist** and are promoted (and DM'd) automatically when a spot opens.
+  - Clicking a button again removes you. By default you can hold one answer at a time; set `multi: true` to allow several.
+  - **Running tally** — each option lists who picked it with a live count (`Playing 9/12`), plus a one-line tally. `hide_attendees: true` shows counts only.
+  - **`image`** — paste an image link (right-click a picture → *Copy image address*). The bot checks the link really is an image and tells you if you copied a page link instead.
+  - Also: `description`, `location`, `duration`, `color`, `channel`, `mention` (role pinged on posting), and `remind` (minutes before start to ping everyone signed up; default 60, `0` off). Attendees are pinged again when it starts.
+- **`/meetup web`** — a private link to the **web editor**: a calendar date picker (Pacific time), an RSVP options table (emoji, name, limit), up to 4 image links with previews, colour, reminders, and a live preview of the Discord post. Links last 2 hours and are tied to you.
+  - **Notifications tab:** type `@` to pick roles, people, @everyone or @here to ping when the meetup is posted and when it starts. **Add role to attendees** gives a role to everyone signed up (except "not going"-type answers), either when they sign up or when the event starts, and can take it back when the event ends. Only people with *Manage Roles* can pick the role, and the bot needs *Manage Roles* with its own role above the one it hands out.
+- **Guests** — track people who aren't on Discord by name: ⚙️ → **Guests** on the post (one box per option, one name per line), or the **Attendees** tab in the web editor. Guests show on the post as "Name *(guest)*", count toward option limits and the attendee list download, but are never pinged or given roles.
+- **⚙️ on the post** (host or anyone with *Manage Events*) — **Edit on web** (every setting, including RSVP options and moving the post to another channel; people keep their answers when options are renamed or reordered), quick edit, download the attendee list, ping attendees, cancel/un-cancel, or delete.
+- **Add to Google Calendar** button on every post.
+- **`/meetup list`** — upcoming meetups with links and head counts.
+
+The web editor is served by the bot at `http://localhost:3000/meetup` — by default only reachable from the computer running the bot. To let other people use their links, give it an address they can reach and set in `.env`: `MEETUP_WEB_HOST=0.0.0.0` and `MEETUP_WEB_URL=https://that-address` (for example with Tailscale Funnel: `tailscale funnel 3000`).
+
+Meetups are stored in `data/meetups.json` and survive restarts; reminders resume when the bot comes back.
+
+
 ## The board picture
 
 The bot draws the town as an image — seats in a circle on real parchment tokens, a fogged rooftop skyline and the clocktower behind them — instead of screen-scraping the online grimoire. It renders from the bot's own game state, so it is always in sync. Dead players keep their token but get a shadow falling across the top of it, so you can still read who they were.
