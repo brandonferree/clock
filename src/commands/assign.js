@@ -1,15 +1,17 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getGuild, save } = require('../store');
 const { isStoryteller, seatedChoices, mention } = require('../game');
-const { rolesForScript, findRole, TEAM_LABEL } = require('../data/scripts');
+const { rolesById, rolesForScript, findRole, TEAM_LABEL } = require('../data/scripts');
 const { updateBoard } = require('../grimoire');
 const { updateChecklist } = require('../night');
-const { deliverCharacter } = require('../deal');
+
+const { updateAssignPanel } = require('../assignPanel');
+const { setupWarning } = require('../setupMods');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('assign')
-    .setDescription('Assign a character to a player — sent to their Grimoire thread (Storyteller only)')
+    .setDescription('Stage a character for a player — sent when you publish (Storyteller only)')
     .addStringOption((o) =>
       o.setName('player').setDescription('The player').setRequired(true).setAutocomplete(true)
     )
@@ -50,16 +52,27 @@ module.exports = {
       return interaction.reply({ content: 'Unknown character.', flags: MessageFlags.Ephemeral });
     }
 
+    const wasTold = player.delivered && rolesById.get(player.delivered);
     player.character = role.id;
     save();
 
-    // Deliver secretly via the player's Storyteller thread.
-    const delivered = await deliverCharacter(interaction.guild, game, playerId);
+    // Staged only. Characters reach players from one place — 📨 Publish on the
+    // assignment panel — so that the whole town learns at the same moment.
     await updateBoard(interaction.guild);
     // A newly assigned character may act tonight, so keep the wake list honest.
     await updateChecklist(interaction.guild);
+    await updateAssignPanel(interaction.guild);
     return interaction.reply({
-      content: `Assigned **${role.name}** to ${mention(game, playerId)}${delivered ? ' and posted it in their Storyteller thread.' : ' — **but their thread could not be reached, so tell them directly.**'}`,
+      content: [
+        `🟡 Staged **${role.name}** for ${mention(game, playerId)} — **not sent yet.**`,
+        wasTold && wasTold.id !== role.id
+          ? `⚠️ They were already told they are the **${wasTold.name}**.`
+          : '',
+        role.setup ? `\n${setupWarning(game, { heading: '⚠️ **This changes the setup:**' })}\n` : '',
+        `Hit 📨 **Publish** on the assignment panel in <#${cfg.channels.grimoire}> to deliver.`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
       flags: MessageFlags.Ephemeral,
     });
   },

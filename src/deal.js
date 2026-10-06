@@ -26,9 +26,11 @@ function characterEmbed(player, role) {
 /**
  * Deliver a player's character into their private Storyteller thread.
  *
- * This is the only place a character reaches a player, so every path that sets
- * `player.character` must call it — otherwise the grimoire knows something the
- * player does not. Returns false if there was no thread to deliver to, so the
+ * This is the only place a character reaches a player. Nothing calls it at
+ * assignment time: `player.character` is a *staged* choice the Storyteller can
+ * still change, and `player.delivered` records what was actually sent. The two
+ * are reconciled by `publishCharacters`, which is the single moment the town
+ * learns anything. Returns false if there was no thread to deliver to, so the
  * caller can tell the Storyteller to pass it on by hand.
  */
 async function deliverCharacter(guild, game, playerId) {
@@ -48,13 +50,14 @@ async function deliverCharacter(guild, game, playerId) {
 }
 
 /**
- * Randomly deal the whole town from the official setup table, then deliver each
- * character to its player.
+ * Randomly deal the whole town from the official setup table.
  *
- * Setup-modifying abilities (Baron, Drunk, Fang Gu…) are not applied — the
- * Storyteller adjusts with `/assign` afterwards, which re-delivers.
+ * This *stages* the deal and delivers nothing: the Storyteller reviews the
+ * spread, swaps whatever the setup table got wrong, and publishes when it is
+ * right. Setup-modifying abilities (Baron, Drunk, Fang Gu…) are not applied,
+ * which is exactly the kind of thing that needs fixing before anyone is told.
  */
-async function dealCharacters(guild, game) {
+function dealCharacters(game) {
   const ids = shuffle(Object.keys(game.players));
   const dist = SETUP_TABLE[Math.min(Math.max(ids.length, 5), 15)];
   if (!dist) return { error: 'Player count is outside 5–15, so the setup table does not cover it. Deal by hand with `/assign`.' };
@@ -76,16 +79,58 @@ async function dealCharacters(guild, game) {
     game.players[ids[i]].character = deck[i].id;
     dealt.push({ id: ids[i], role: deck[i] });
   }
+  // A new deal is a new set of in-play characters, so bluffs picked against the
+  // old one may now be sitting in front of somebody. Drop them and re-pick.
+  game.bluffs = null;
   save();
 
-  // Deliver only after every character is committed, so a mid-loop failure
-  // cannot leave the town half-dealt.
-  const undelivered = [];
-  for (const { id } of dealt) {
-    const ok = await deliverCharacter(guild, game, id);
-    if (!ok) undelivered.push(id);
-  }
-  return { dist, dealt, undelivered };
+  return { dist, dealt };
 }
 
-module.exports = { shuffle, characterEmbed, deliverCharacter, dealCharacters };
+/** Players whose staged character has not reached them yet. */
+function pendingIds(game) {
+  return Object.entries(game.players)
+    .filter(([, p]) => p.character && p.delivered !== p.character)
+    .map(([id]) => id);
+}
+
+/**
+ * Tell the town. Every staged character that has not been delivered goes out
+ * at once — the sends are started together rather than awaited one after
+ * another, so fifteen players learn who they are within a moment of each other
+ * instead of over the fifteen seconds a serial loop would take. Nobody gets a
+ * head start on reading their ability.
+ *
+ * A player whose character has not changed since the last publish is skipped,
+ * so correcting one seat mid-game does not re-send the other fourteen.
+ *
+ * Returns `{ sent, failed }` as arrays of player ids.
+ */
+async function publishCharacters(guild, game) {
+  const ids = pendingIds(game);
+  const results = await Promise.all(ids.map((id) => deliverCharacter(guild, game, id)));
+
+  const sent = [];
+  const failed = [];
+  ids.forEach((id, i) => {
+    if (results[i]) {
+      // Only a delivery that actually landed counts — a failed one stays
+      // pending so the next publish retries it.
+      game.players[id].delivered = game.players[id].character;
+      sent.push(id);
+    } else {
+      failed.push(id);
+    }
+  });
+  save();
+  return { sent, failed };
+}
+
+module.exports = {
+  shuffle,
+  characterEmbed,
+  deliverCharacter,
+  dealCharacters,
+  publishCharacters,
+  pendingIds,
+};

@@ -1,11 +1,15 @@
-const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getGuild, save } = require('../store');
-const { logAction, isStoryteller, seatedChoices, mention, COLORS } = require('../game');
+const { logAction, isStoryteller, seatedChoices, mention } = require('../game');
+const { placeToken } = require('../tokens');
 const { rolesById, rolesForScript } = require('../data/scripts');
-const { updateBoard, postScriptReference } = require('../grimoire');
-const { renderGrimoire } = require('../render');
-const { nightOrder, postNightAlert, updateChecklist } = require('../night');
+const { updateBoard, clearScriptReference, grimoireView } = require('../grimoire');
+const { postScriptSheets, sheetStatus } = require('../scriptSheets');
+const { tokenCharacters, tokensFor } = require('../reminderPanel');
+const { updateChecklist, nightOrderEmbed, nightAlertSummary } = require('../night');
 const { dealCharacters } = require('../deal');
+const { postAssignPanel, updateAssignPanel } = require('../assignPanel');
+const { setupWarning } = require('../setupMods');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -38,6 +42,12 @@ module.exports = {
         .setName('remind')
         .setDescription('Attach a reminder token to a player (e.g. Poisoned, Red herring)')
         .addStringOption((o) => o.setName('player').setDescription('Who gets the token').setRequired(true).setAutocomplete(true))
+        // Character first, token second — the same narrowing the 🔖 panel uses.
+        // One combined list runs to 39 entries on Bad Moon Rising, which is more
+        // than autocomplete will show at once.
+        .addStringOption((o) =>
+          o.setName('character').setDescription('Whose token is it?').setRequired(true).setAutocomplete(true)
+        )
         .addStringOption((o) => o.setName('token').setDescription('The reminder token').setRequired(true).setAutocomplete(true))
     )
     .addSubcommand((s) =>
@@ -50,10 +60,15 @@ module.exports = {
     .addSubcommand((s) =>
       s
         .setName('deal')
-        .setDescription('Randomly deal the whole town and send each player their character privately')
+        .setDescription('Randomly stage the whole town — review on the panel, then publish to send')
         .addBooleanOption((o) =>
           o.setName('redeal').setDescription('Re-deal even though characters are already assigned (default no)')
         )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('assign-panel')
+        .setDescription('Post the click-through character assignment panel in the Grimoire')
     )
     .addSubcommand((s) => s.setName('night-order').setDescription('Show the night order for characters in play (private)'))
     .addSubcommand((s) =>
@@ -66,7 +81,9 @@ module.exports = {
       s.setName('refresh').setDescription('Refresh the pinned Grimoire board with current town, deaths, and status')
     )
     .addSubcommand((s) =>
-      s.setName('script').setDescription('Re-post the character reference (all abilities) in the Grimoire')
+      s
+        .setName('script')
+        .setDescription('Re-post the pinned reference sheets in the town square')
     ),
 
   async autocomplete(interaction) {
@@ -77,23 +94,33 @@ module.exports = {
       return interaction.respond(seatedChoices(game, focused.value));
     }
 
-    // Token option. Values are `roleId|text` so execute can recover both halves.
     const q = focused.value.toLowerCase();
     let choices;
-    if (interaction.options.getSubcommand() === 'unremind') {
-      // Only offer tokens the chosen player actually has.
+
+    // Characters on this script that carry any token, in-play ones first —
+    // those are what a Storyteller reaches for nearly every time.
+    if (focused.name === 'character') {
+      choices = tokenCharacters(game ?? { players: {}, script: 'tb' }).map(({ role, inPlay }) => ({
+        name: `${inPlay ? '● ' : ''}${role.name} — ${tokensFor(role).join(', ')}`.slice(0, 100),
+        value: role.id,
+      }));
+    } else if (interaction.options.getSubcommand() === 'unremind') {
+      // Only offer tokens the chosen player actually has. Values are
+      // `roleId|text` so execute can recover both halves.
       const player = game?.players?.[interaction.options.getString('player')];
       choices = (player?.reminders ?? []).map((rem) => ({
         name: `${rolesById.get(rem.role)?.name ?? rem.role} — ${rem.text}`,
         value: `${rem.role}|${rem.text}`,
       }));
     } else {
-      choices = rolesForScript(game?.script ?? 'tb').flatMap((r) =>
-        [...(r.reminders ?? []), ...(r.remindersGlobal ?? [])].map((text) => ({
-          name: `${r.name} — ${text}`,
-          value: `${r.id}|${text}`,
-        }))
-      );
+      // Tokens belonging to the character already chosen. Falling back to the
+      // whole script keeps the option usable if it is filled in out of order.
+      const role = rolesById.get(interaction.options.getString('character'));
+      choices = role
+        ? tokensFor(role).map((text) => ({ name: text, value: text }))
+        : rolesForScript(game?.script ?? 'tb').flatMap((r) =>
+            tokensFor(r).map((text) => ({ name: `${r.name} — ${text}`, value: text }))
+          );
     }
     return interaction.respond(choices.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 25));
   },
@@ -115,8 +142,13 @@ module.exports = {
       if (!player) return interaction.reply({ content: 'That player is not in the game. Pick one from the autocomplete list.', flags: MessageFlags.Ephemeral });
       if (!player.alive) return interaction.reply({ content: 'They are already dead.', flags: MessageFlags.Ephemeral });
       player.alive = false;
-      save();
+      // Which night they died on, for the characters that wake because of it.
+      player.diedAt = game.day;
       const cause = interaction.options.getString('cause') ?? 'other';
+      // Remembered for the Undertaker, who is told tonight which character was
+      // executed today — by then the day is gone and only this record is left.
+      if (cause === 'execution') game.lastExecuted = { id: playerId, character: player.character, day: game.day };
+      save();
       const causeText = {
         night: `died in the night. ${game.phase === 'day' ? `The town wakes to grim news on Day ${game.day}.` : ''}`,
         execution: `was executed by the town on Day ${game.day}.`,
@@ -156,16 +188,25 @@ module.exports = {
       if (!player) {
         return interaction.reply({ content: 'That player is not in the game. Pick one from the autocomplete list.', flags: MessageFlags.Ephemeral });
       }
-      const [roleId, ...rest] = interaction.options.getString('token').split('|');
-      const text = rest.join('|');
+      // `remind` names the character in its own option; `unremind` picks from
+      // what the player is already carrying, so its value packs both halves.
+      const [roleId, text] =
+        sub === 'remind'
+          ? [interaction.options.getString('character'), interaction.options.getString('token')]
+          : (() => {
+              const [id, ...rest] = interaction.options.getString('token').split('|');
+              return [id, rest.join('|')];
+            })();
       const role = rolesById.get(roleId);
       if (!role || !text) {
-        return interaction.reply({ content: 'Pick a token from the autocomplete list.', flags: MessageFlags.Ephemeral });
+        return interaction.reply({ content: 'Pick a character and token from the autocomplete lists.', flags: MessageFlags.Ephemeral });
       }
 
       player.reminders ??= [];
+      let movedFrom = null;
       if (sub === 'remind') {
-        player.reminders.push({ role: roleId, text });
+        // One of each token exists, so this moves it rather than cloning it.
+        movedFrom = placeToken(game, playerId, roleId, text);
       } else {
         const i = player.reminders.findIndex((rem) => rem.role === roleId && rem.text === text);
         if (i === -1) {
@@ -178,39 +219,26 @@ module.exports = {
       return interaction.reply({
         content:
           sub === 'remind'
-            ? `🔖 **${role.name} — ${text}** placed on ${mention(game, playerId)}.`
+            ? `🔖 **${role.name} — ${text}** placed on ${mention(game, playerId)}.` +
+              (movedFrom ? ` Moved off ${mention(game, movedFrom)} — only one is ever on the board.` : '')
             : `Removed **${role.name} — ${text}** from ${mention(game, playerId)}.`,
         flags: MessageFlags.Ephemeral,
       });
     }
 
+    if (sub === 'assign-panel') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const msg = await postAssignPanel(interaction.guild);
+      return interaction.editReply(
+        msg
+          ? `🎭 Assignment panel posted: ${msg.url}\nTap a player to pick their character, or **🎲 Random deal** for the whole town.`
+          : `Could not post it in <#${cfg.channels.grimoire}> — is the Grimoire channel still there? Try \`/setup\`.`
+      );
+    }
+
     if (sub === 'night-order') {
-      // Shared with the night alert so both views agree on who acts when.
-      const { first, entries: ordered } = nightOrder(game);
-
-      const lines = ordered.length
-        ? ordered.map(({ player, role, order, reminder }) =>
-            player.alive
-              ? `🟢 **${order}. ${role.name}** — ${player.name}\n${reminder}`
-              : `💀 **${order}. ~~${role.name}~~** — ~~${player.name}~~ *(dead — skip)*\n*${reminder}*`
-          )
-        : ['*No characters in play act tonight (or no characters assigned yet).*'];
-
-      const deadCount = ordered.filter(({ player }) => !player.alive).length;
-      return interaction.reply({
-        flags: MessageFlags.Ephemeral,
-        embeds: [
-          new EmbedBuilder()
-            .setTitle(`🌙 ${first ? 'First night' : 'Night'} order`)
-            .setColor(COLORS.night)
-            .setDescription(lines.join('\n\n').slice(0, 4000))
-            .setFooter({
-              text: deadCount
-                ? `🟢 alive · 💀 dead (${deadCount} to skip) — dead players lose their ability, except on-death ones like the Ravenkeeper.`
-                : '🟢 all players with night actions are still alive.',
-            }),
-        ],
-      });
+      // Shared with the night-controls button so both views agree on who acts when.
+      return interaction.reply({ embeds: [nightOrderEmbed(game)], flags: MessageFlags.Ephemeral });
     }
 
     if (sub === 'deal') {
@@ -224,28 +252,21 @@ module.exports = {
           flags: MessageFlags.Ephemeral,
         });
       }
-      // One thread message per player, so defer.
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const result = await dealCharacters(interaction.guild, game);
+      const result = dealCharacters(game);
       if (result.error) return interaction.editReply(result.error);
 
-      await logAction(interaction.guild, {
-        title: '🎲 Characters dealt',
-        description:
-          `The Storyteller has dealt characters (${result.dist.join('/')} townsfolk/outsiders/minions/demon). ` +
-          'Each of you has been told who you are in your private Storyteller thread — go and look.',
-      });
       await updateBoard(interaction.guild);
       await updateChecklist(interaction.guild);
+      await updateAssignPanel(interaction.guild);
       return interaction.editReply(
         [
-          `🎲 Dealt **${result.dealt.length}** characters and delivered each one privately:`,
+          `🎲 Staged **${result.dealt.length}** characters (${result.dist.join('/')} townsfolk/outsiders/minions/demon):`,
           result.dealt.map(({ id, role }) => `${mention(game, id)} → **${role.name}**`).join('\n'),
-          result.undelivered.length
-            ? `\n⚠️ Could not reach the Storyteller thread for: ${result.undelivered.map((id) => mention(game, id)).join(', ')} — tell them directly.`
-            : '',
-          '\n*(Setup-modifying abilities like the Baron are not applied — adjust with `/assign`, which re-delivers.)*',
-          game.phase === 'night' ? "Then run `/st night-alert` to ping tonight's actors." : '',
+          '',
+          `**Nothing has been sent.** Review the spread on the 🎭 panel in <#${cfg.channels.grimoire}>, fix whatever you want, ` +
+            'then hit 📨 **Publish** to tell everyone at once.',
+          setupWarning(game),
         ]
           .filter(Boolean)
           .join('\n')
@@ -253,26 +274,9 @@ module.exports = {
     }
 
     if (sub === 'night-alert') {
-      if (game.phase !== 'night') {
-        return interaction.reply({
-          content: `It is Day ${game.day} — there is nobody to wake. Call \`/phase night\` first.`,
-          flags: MessageFlags.Ephemeral,
-        });
-      }
       // Pinging N threads is N round-trips, so defer.
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const alert = await postNightAlert(interaction.guild);
-      if (!alert?.waking) {
-        return interaction.editReply(
-          'Nobody acts tonight — either no character in play has a night action, or characters have not been assigned yet (`/assign`).'
-        );
-      }
-      return interaction.editReply(
-        `🌙 Pinged **${alert.waking}** Storyteller thread${alert.waking === 1 ? '' : 's'}. ` +
-          (alert.message
-            ? `Wake checklist: ${alert.message.url}`
-            : `Could not post the checklist in <#${cfg.channels.grimoire}> — is the channel still there?`)
-      );
+      return interaction.editReply(await nightAlertSummary(interaction.guild));
     }
 
     if (sub === 'refresh') {
@@ -287,34 +291,16 @@ module.exports = {
 
     if (sub === 'script') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      await postScriptReference(interaction.guild, game.script);
+      await clearScriptReference(interaction.guild);
       await updateBoard(interaction.guild);
-      return interaction.editReply(`Character reference posted in <#${cfg.channels.grimoire}>.`);
+      const sheets = await postScriptSheets(interaction.guild, game.script);
+      return interaction.editReply(sheetStatus(sheets, cfg.channels.townSquare));
     }
 
     if (sub === 'grimoire') {
       // Rendering fetches character art on a cold cache, so defer first.
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const lines = Object.entries(game.players).map(([id, p]) => {
-        const role = p.character && rolesById.get(p.character);
-        const rems = p.reminders?.length ? ` · 🔖 ${p.reminders.map((rem) => `\`${rem.text}\``).join(' ')}` : '';
-        return `${p.alive ? '🙂' : '💀'} ${mention(game, id)} — **${role?.name ?? 'unassigned'}**${rems}`;
-      });
-      const embed = new EmbedBuilder()
-        .setTitle('📖 Grimoire')
-        .setColor(COLORS.vote)
-        .setDescription(lines.join('\n') || '*No players.*');
-
-      // The board picture is a bonus — if it fails, still send the text.
-      const png = await renderGrimoire(game, { reveal: true }).catch(() => null);
-      if (png) {
-        embed.setImage('attachment://grimoire.png');
-        return interaction.editReply({
-          embeds: [embed],
-          files: [new AttachmentBuilder(png, { name: 'grimoire.png' })],
-        });
-      }
-      return interaction.editReply({ embeds: [embed] });
+      return interaction.editReply(await grimoireView(game));
     }
   },
 };

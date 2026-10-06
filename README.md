@@ -19,8 +19,10 @@ It also creates **Storyteller** and **Townsfolk** roles. The Townsfolk role is a
 
 1. Create an application at the [Discord Developer Portal](https://discord.com/developers/applications), add a **Bot**, and copy the token.
 2. Under **Bot → Privileged Gateway Intents**, enable **Server Members Intent**.
-3. Invite the bot with the `bot` + `applications.commands` scopes and these permissions: Manage Roles, Manage Channels, Manage Threads, Create Private Threads, Send Messages, Send Messages in Threads, Embed Links, Read Message History.
-   - Quick invite URL: `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot+applications.commands&permissions=395405511696`
+3. Invite the bot with the `bot` + `applications.commands` scopes and these permissions: Manage Roles, Manage Channels, Manage Threads, Create Public Threads, Create Private Threads, Send Messages, Send Messages in Threads, Manage Messages, **Pin Messages**, Embed Links, **Attach Files**, Read Message History, Add Reactions.
+   - Quick invite URL: `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot+applications.commands&permissions=2252195219237968`
+   - **Pin Messages** is its own permission now — Discord split it out of Manage Messages. A bot invited with an older link posts the script reference sheets to #town-square and then fails to pin them, with a bare `Missing Permissions` that names nothing. If pinning is broken, re-invite with the link above (it updates the existing role rather than adding a second bot) and run `/st script`.
+   - The single source of truth for this list is `src/permissions.js`; `/setup` checks against it and prints a matching invite link when something is missing.
 4. Configure and run:
 
 ```bash
@@ -111,7 +113,6 @@ A Sesh-style event scheduler for game nights (or anything else).
 The web editor is served by the bot at `http://localhost:3000/meetup` — by default only reachable from the computer running the bot. To let other people use their links, give it an address they can reach and set in `.env`: `MEETUP_WEB_HOST=0.0.0.0` and `MEETUP_WEB_URL=https://that-address` (for example with Tailscale Funnel: `tailscale funnel 3000`).
 
 Meetups are stored in `data/meetups.json` and survive restarts; reminders resume when the bot comes back.
-
 
 ## The board picture
 

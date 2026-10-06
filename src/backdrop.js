@@ -170,11 +170,22 @@ function drawBackdrop(ctx, size, night, { ring = 0, tokenR = 0 } = {}) {
     }
   }
 
-  // Moon, kept to a corner so it never sits behind the centre text.
+  // Moon, pushed well into the corner so it never crowds the seat ring or sits
+  // behind the centre text. A half moon rather than a full one: the flat
+  // terminator gives the sky a shape instead of another plain disc, and it reads
+  // as a moon at a glance even this small.
   if (theme.moon) {
-    const mx = w * 0.82;
-    const my = h * 0.13;
-    const mr = size * 0.045;
+    const mx = w * 0.88;
+    const my = h * 0.095;
+    const mr = size * 0.05;
+    // The lit half is the right-hand one — a semicircle whose closing edge is
+    // the straight terminator down the middle.
+    const litHalf = () => {
+      ctx.beginPath();
+      ctx.arc(mx, my, mr, -Math.PI / 2, Math.PI / 2);
+      ctx.closePath();
+    };
+
     const g = ctx.createRadialGradient(mx, my, mr * 0.5, mx, my, mr * 6);
     g.addColorStop(0, theme.moonGlow);
     g.addColorStop(1, 'rgba(150,175,255,0)');
@@ -182,21 +193,27 @@ function drawBackdrop(ctx, size, night, { ring = 0, tokenR = 0 } = {}) {
     ctx.beginPath();
     ctx.arc(mx, my, mr * 6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = theme.moon;
+
+    // Earthshine: the unlit half, barely there, so the moon still reads round.
+    ctx.fillStyle = 'rgba(200,212,255,0.07)';
     ctx.beginPath();
     ctx.arc(mx, my, mr, 0, Math.PI * 2);
     ctx.fill();
-    // A few faint maria. Clipped to the disc so nothing spills into the sky.
+
+    ctx.fillStyle = theme.moon;
+    litHalf();
+    ctx.fill();
+
+    // A few faint maria, clipped to the lit half so none float in the shadow.
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(mx, my, mr, 0, Math.PI * 2);
+    litHalf();
     ctx.clip();
     ctx.fillStyle = 'rgba(150,160,200,0.35)';
     for (const [ox, oy, orad] of [
-      [-0.35, -0.2, 0.26],
-      [0.28, 0.12, 0.2],
-      [-0.1, 0.42, 0.16],
-      [0.42, -0.38, 0.12],
+      [0.16, -0.28, 0.22],
+      [0.42, 0.16, 0.18],
+      [0.1, 0.44, 0.15],
+      [0.6, -0.3, 0.11],
     ]) {
       ctx.beginPath();
       ctx.arc(mx + mr * ox, my + mr * oy, mr * orad, 0, Math.PI * 2);

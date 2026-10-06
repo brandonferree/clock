@@ -74,7 +74,21 @@ function seatedChoices(game, focused) {
     .map(([id, p]) => ({ name: `${p.alive ? '🙂' : '💀'} ${p.isBot ? '🤖 ' : ''}${p.name}`, value: id }));
 }
 
+/**
+ * Which half of the day it is.
+ *
+ * A day has two beats at a real table: everyone mills about and talks, then the
+ * Storyteller calls the town together and nominations open. `discussion` is the
+ * first, `town` the second, and the move between them is the Storyteller's call.
+ *
+ * Defaults to `town` so a game saved before segments existed — or any code path
+ * that never set one — behaves the way the bot always did: nominations open.
+ */
+function daySegment(game) {
+  return game?.daySegment ?? 'town';
+}
+
 /** Error whose message is safe to show the user (ephemeral). */
 class UserError extends Error {}
 
-module.exports = { logAction, isStoryteller, getGame, requireGame, alivePlayers, playerMention, mention, seatedChoices, UserError, COLORS, save };
+module.exports = { logAction, isStoryteller, getGame, requireGame, alivePlayers, playerMention, mention, seatedChoices, daySegment, UserError, COLORS, save };

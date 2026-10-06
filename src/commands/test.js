@@ -1,13 +1,33 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getGuild, save } = require('../store');
-const { logAction, isStoryteller, mention } = require('../game');
+const { isStoryteller, mention } = require('../game');
+const { voteBlock } = require('../voteRules');
 const { refreshJoinPanel } = require('./game');
+const { updateLobbyPanel } = require('../lobbyPanel');
+const { updateAssignPanel } = require('../assignPanel');
 const { voteEmbed } = require('./nominate');
 const { updateBoard } = require('../grimoire');
 const { updateChecklist } = require('../night');
 const { dealCharacters } = require('../deal');
 
-const BOT_NAMES = ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank', 'Grace', 'Heidi', 'Ivan', 'Judy'];
+// The cryptography cast, in order. Fourteen of them: a full 15-player town
+// minus the seat the Storyteller sits a real player in to test delivery.
+const BOT_NAMES = [
+  'Alice',
+  'Bob',
+  'Carol',
+  'Dave',
+  'Eve',
+  'Frank',
+  'Grace',
+  'Heidi',
+  'Ivan',
+  'Judy',
+  'Mallory',
+  'Niaj',
+  'Olivia',
+  'Peggy',
+];
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -18,14 +38,14 @@ module.exports = {
         .setName('add-bots')
         .setDescription('Add simulated players to the lobby')
         .addIntegerOption((o) =>
-          o.setName('count').setDescription('How many (default 4)').setMinValue(1).setMaxValue(10)
+          o.setName('count').setDescription('How many, 1–14 (default 4)').setMinValue(1).setMaxValue(14)
         )
     )
     .addSubcommand((s) => s.setName('remove-bots').setDescription('Remove all simulated players from the lobby'))
     .addSubcommand((s) =>
       s
         .setName('deal')
-        .setDescription('Randomly deal characters to everyone (bots included) and send each to their thread')
+        .setDescription('Randomly stage characters for everyone (bots included) — publish to send them')
     )
     .addSubcommand((s) =>
       s
@@ -78,10 +98,7 @@ module.exports = {
       }
       save();
       await refreshJoinPanel(interaction.guild);
-      await logAction(interaction.guild, {
-        title: '🤖 Simulated players joined',
-        description: `${added.map((n) => `**🤖 ${n}**`).join(', ')} take their seats. (${Object.keys(game.players).length} players)`,
-      });
+      await updateLobbyPanel(interaction.guild);
       return interaction.reply({
         content: `Added ${added.length} simulated players: ${added.join(', ')}.`,
         flags: MessageFlags.Ephemeral,
@@ -96,6 +113,7 @@ module.exports = {
       for (const [id] of removed) delete game.players[id];
       save();
       await refreshJoinPanel(interaction.guild);
+      await updateLobbyPanel(interaction.guild);
       return interaction.reply({ content: `Removed ${removed.length} simulated players.`, flags: MessageFlags.Ephemeral });
     }
 
@@ -103,27 +121,20 @@ module.exports = {
       if (game.status !== 'running') {
         return interaction.reply({ content: 'Start the game first with `/game start`.', flags: MessageFlags.Ephemeral });
       }
-      // Same engine as `/st deal` — it delivers each character to its player's
-      // Storyteller thread, which is N round-trips, so defer.
+      // Same engine as `/st deal`: it stages the spread and sends nothing.
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const result = await dealCharacters(interaction.guild, game);
+      const result = dealCharacters(game);
       if (result.error) return interaction.editReply(result.error);
 
-      await logAction(interaction.guild, {
-        title: '🎲 Characters dealt',
-        description: `The Storyteller dealt characters randomly (${result.dist.join('/')}). Check \`/st grimoire\`.`,
-      });
       await updateBoard(interaction.guild);
       await updateChecklist(interaction.guild);
+      await updateAssignPanel(interaction.guild);
       return interaction.editReply(
         [
-          'Dealt and delivered to every Storyteller thread:',
+          `Staged (${result.dist.join('/')}) — **nothing sent yet**:`,
           result.dealt.map(({ id, role }) => `${mention(game, id)} → **${role.name}**`).join('\n'),
-          result.undelivered.length
-            ? `\n⚠️ Could not reach the thread for: ${result.undelivered.map((id) => mention(game, id)).join(', ')} — tell them directly.`
-            : '',
           '\n*(No setup-modifying abilities like Baron were applied — adjust with `/assign` if needed.)*',
-          "Run `/st night-alert` to ping tonight's actors.",
+          `Hit 📨 **Publish** on the 🎭 panel in <#${cfg.channels.grimoire}> to deliver them all at once.`,
         ]
           .filter(Boolean)
           .join('\n')
@@ -137,11 +148,26 @@ module.exports = {
       const how = interaction.options.getString('how') ?? 'random';
       const nom = game.nomination;
       const voted = [];
-      for (const [id, p] of Object.entries(game.players)) {
+      const held = [];
+      // Butlers go last. Their hand is only allowed up if their Master's is,
+      // and whether the Master voted is a fact that does not exist until every
+      // other simulated player has been through this loop.
+      const order = Object.entries(game.players).sort(
+        ([, a], [, b]) => (a.character === 'butler' ? 1 : 0) - (b.character === 'butler' ? 1 : 0)
+      );
+      for (const [id, p] of order) {
         if (!p.isBot) continue;
         if (!p.alive && p.deadVoteUsed) continue;
-        const yes = how === 'yes' ? true : how === 'no' ? false : Math.random() < 0.5;
-        if (yes) {
+        const wants = how === 'yes' ? true : how === 'no' ? false : Math.random() < 0.5;
+        // Simulated players play by the same rules as everyone else — a random
+        // yes from a Butler whose Master kept their hand down is a vote that
+        // could not have happened at a table.
+        if (wants && voteBlock(game, id, true)) {
+          held.push(p.name);
+          delete nom.votes[id];
+          continue;
+        }
+        if (wants) {
           nom.votes[id] = true;
           voted.push(p.name);
         } else {
@@ -154,9 +180,12 @@ module.exports = {
       const msg = townSquare && (await townSquare.messages.fetch(nom.messageId).catch(() => null));
       if (msg) await msg.edit({ embeds: [voteEmbed(game)] }).catch(() => null);
       return interaction.reply({
-        content: voted.length
-          ? `🤖 Voted yes: ${voted.join(', ')}. Others voted no.`
-          : '🤖 All simulated players voted no.',
+        content:
+          (voted.length
+            ? `🤖 Voted yes: ${voted.join(', ')}. Others voted no.`
+            : '🤖 All simulated players voted no.') +
+          (held.length ? `
+🧈 Hand kept down by the Butler rule: ${held.join(', ')}.` : ''),
         flags: MessageFlags.Ephemeral,
       });
     }

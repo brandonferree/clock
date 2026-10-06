@@ -53,7 +53,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await meetups.handleModal(interaction);
     } else if (interaction.isButton()) {
       await handleButton(interaction);
-    } else if (interaction.isUserSelectMenu()) {
+    } else if (interaction.isUserSelectMenu() || interaction.isStringSelectMenu()) {
       await handleSelect(interaction);
     }
   } catch (err) {
