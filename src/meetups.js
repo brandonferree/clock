@@ -44,6 +44,7 @@ const DEFAULT_OPTIONS = '✅ Going, 🤔 Maybe, ❌ Not going';
 const MAX_OPTIONS = 10;
 const MAX_IMAGES = 4;
 const MAX_GUESTS = 100; // per option
+const MAX_GUESTS_PER_MEMBER = 10; // per meetup, for members who aren't managers
 const COLOR = 0x8b1e2d;
 
 // ---------------------------------------------------------------- time ----
@@ -198,6 +199,19 @@ function guestsOf(ev, i) {
   return ev.guests?.[i] ?? [];
 }
 
+/** Who brought each guest in option i: { name: userId }. Unknown for guests the host typed in. */
+function guestHostsOf(ev, i) {
+  return ev.guestHosts?.[i] ?? {};
+}
+
+/** Drop "brought by" entries for guests no longer on the list. */
+function pruneGuestHosts(ev) {
+  ev.guestHosts = ev.options.map((_, i) => {
+    const hosts = guestHostsOf(ev, i);
+    return Object.fromEntries(guestsOf(ev, i).filter((g) => hosts[g]).map((g) => [g, hosts[g]]));
+  });
+}
+
 /** Everyone holding a spot in an option: Discord members plus guests. */
 function takenCount(ev, i) {
   return (ev.rsvps[i]?.length ?? 0) + guestsOf(ev, i).length;
@@ -211,8 +225,8 @@ function parseGuests(input) {
 
 // --------------------------------------------------------------- embed ----
 
-function namesList(ids, max = 25, guests = []) {
-  const all = [...ids.map((id) => `<@${id}>`), ...guests.map((g) => `${g} *(guest)*`)];
+function namesList(ids, max = 25, guests = [], hosts = {}) {
+  const all = [...ids.map((id) => `<@${id}>`), ...guests.map((g) => (hosts[g] ? `${g} *(guest of <@${hosts[g]}>)*` : `${g} *(guest)*`))];
   if (!all.length) return '—';
   const shown = all.slice(0, max).join('\n');
   return all.length > max ? `${shown}\n*+${all.length - max} more*` : shown;
@@ -268,7 +282,7 @@ function meetupEmbeds(ev) {
       value = '*names hidden*';
       if (wait.length) value += `\n⏳ Waitlist: ${wait.length}`;
     } else {
-      value = namesList(ids, 25, guestsOf(ev, i));
+      value = namesList(ids, 25, guestsOf(ev, i), guestHostsOf(ev, i));
       if (wait.length) value += `\n\n⏳ **Waitlist (${wait.length})**\n${namesList(wait, 10)}`;
     }
     embed.addFields({
@@ -310,6 +324,7 @@ function meetupComponents(ev) {
   );
   if (!ev.cancelled) {
     tools.addComponents(
+      new ButtonBuilder().setCustomId(`meetup_guests:${ev.id}`).setLabel('Bring a guest').setEmoji('🧑‍🤝‍🧑').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setLabel('Add to Google Calendar').setStyle(ButtonStyle.Link).setURL(googleCalendarUrl(ev))
     );
   }
@@ -493,7 +508,9 @@ async function updateMeetup(client, ev, input) {
   // Over-full options keep everyone already in; only new sign-ups wait.
   const moved = norm.fields.start !== ev.start;
   const before = { ...ev };
-  Object.assign(ev, norm.fields, { options, rsvps, waitlist, guests });
+  const guestHosts = norm.options.map((o) => (o.from !== null && ev.guestHosts?.[o.from]) || {});
+  Object.assign(ev, norm.fields, { options, rsvps, waitlist, guests, guestHosts });
+  pruneGuestHosts(ev);
   delete ev.image;
   ev.mention = before.mention; // the creation ping is not resent on edit
   if (moved) {
@@ -717,11 +734,15 @@ function editModal(ev) {
     );
 }
 
-/** One box per option (a modal holds five), each listing that option's guests. */
-function guestsModal(ev) {
+/**
+ * One box per option (a modal holds five). Managers see and edit every
+ * guest; anyone else sees and edits only the guests they brought.
+ */
+function guestsModal(ev, userId, manager) {
+  const shown = (i) => (manager ? guestsOf(ev, i) : guestsOf(ev, i).filter((g) => guestHostsOf(ev, i)[g] === userId));
   return new ModalBuilder()
     .setCustomId(`meetup_guestsubmit:${ev.id}`)
-    .setTitle('Guests (people not on Discord)')
+    .setTitle(manager ? 'Guests (people not on Discord)' : 'Your guests (people not on Discord)')
     .addComponents(
       ev.options.slice(0, 5).map((opt, i) =>
         new ActionRowBuilder().addComponents(
@@ -732,22 +753,68 @@ function guestsModal(ev) {
             .setRequired(false)
             .setMaxLength(4000)
             .setPlaceholder('Jane Smith')
-            .setValue(guestsOf(ev, i).join('\n'))
+            .setValue(shown(i).join('\n'))
         )
       )
     );
 }
 
-async function handleGuestsSubmit(interaction, ev) {
-  ev.guests = ev.options.map((_, i) => {
-    if (i >= 5) return guestsOf(ev, i);
-    return parseGuests(interaction.fields.getTextInputValue(`g${i}`));
-  });
+async function handleGuestsSubmit(interaction, ev, manager) {
+  const uid = interaction.user.id;
+  const notes = [];
+  ev.guestHosts = ev.options.map((_, i) => ({ ...guestHostsOf(ev, i) }));
+
+  if (manager) {
+    ev.guests = ev.options.map((_, i) => {
+      if (i >= 5) return guestsOf(ev, i);
+      return parseGuests(interaction.fields.getTextInputValue(`g${i}`));
+    });
+  } else {
+    // Swap out this member's own guests; everyone else's stay as they are.
+    // New guests only go in while there's room and the member is under their cap.
+    const mine = (i) => guestsOf(ev, i).filter((g) => ev.guestHosts[i][g] === uid);
+    let count = ev.options.reduce((n, _, i) => n + (i >= 5 ? mine(i).length : 0), 0);
+    ev.guests = ev.options.map((opt, i) => {
+      if (i >= 5) return guestsOf(ev, i);
+      const before = mine(i);
+      const others = guestsOf(ev, i).filter((g) => !before.includes(g));
+      const wanted = parseGuests(interaction.fields.getTextInputValue(`g${i}`));
+      const list = [...others];
+      for (const g of before) if (!wanted.includes(g)) delete ev.guestHosts[i][g];
+      for (const g of wanted) {
+        if (others.includes(g)) {
+          notes.push(`**${g}** is already on **${optionLabel(opt)}**.`);
+          continue;
+        }
+        const isNew = !before.includes(g);
+        const full = opt.limit && (ev.rsvps[i]?.length ?? 0) + list.length >= opt.limit;
+        if (count >= MAX_GUESTS_PER_MEMBER || (isNew && full)) {
+          notes.push(
+            count >= MAX_GUESTS_PER_MEMBER
+              ? `Couldn't add **${g}** — you can bring up to ${MAX_GUESTS_PER_MEMBER} guests.`
+              : `Couldn't add **${g}** — **${optionLabel(opt)}** is full.`
+          );
+          delete ev.guestHosts[i][g];
+          continue;
+        }
+        list.push(g);
+        ev.guestHosts[i][g] = uid;
+        count++;
+      }
+      return list.slice(0, MAX_GUESTS);
+    });
+  }
+  pruneGuestHosts(ev);
   promote(ev, ev.options.map((_, i) => i));
   save();
   await refresh(interaction.client, ev);
-  const total = ev.guests.reduce((n, g) => n + g.length, 0);
-  return interaction.reply({ content: `🧑‍🤝‍🧑 Guest list saved — ${total} guest${total === 1 ? '' : 's'}.`, flags: MessageFlags.Ephemeral });
+  const total = manager
+    ? ev.guests.reduce((n, g) => n + g.length, 0)
+    : ev.guestHosts.reduce((n, h) => n + Object.values(h).filter((u) => u === uid).length, 0);
+  const head = manager
+    ? `🧑‍🤝‍🧑 Guest list saved — ${total} guest${total === 1 ? '' : 's'}.`
+    : `🧑‍🤝‍🧑 You're bringing ${total} guest${total === 1 ? '' : 's'}.`;
+  return interaction.reply({ content: [head, ...notes].join('\n').slice(0, 2000), flags: MessageFlags.Ephemeral });
 }
 
 async function handleEditSubmit(interaction, ev) {
@@ -794,6 +861,13 @@ async function handleButton(interaction) {
     return handleRsvp(interaction, ev, Number(extra));
   }
 
+  // Anyone can bring guests; managers can edit everyone's.
+  if (action === 'meetup_guests') {
+    const manager = canManage(interaction, ev);
+    if (ev.cancelled && !manager) return interaction.reply({ content: 'This meetup was cancelled.', flags: MessageFlags.Ephemeral });
+    return interaction.showModal(guestsModal(ev, interaction.user.id, manager));
+  }
+
   if (!canManage(interaction, ev)) {
     return interaction.reply({ content: 'Only the host or a server event manager can manage this meetup.', flags: MessageFlags.Ephemeral });
   }
@@ -807,8 +881,6 @@ async function handleButton(interaction) {
     }
     case 'meetup_edit':
       return interaction.showModal(editModal(ev));
-    case 'meetup_guests':
-      return interaction.showModal(guestsModal(ev));
     case 'meetup_export': {
       const guild = interaction.guild;
       const sections = await Promise.all(
@@ -885,9 +957,13 @@ async function handleModal(interaction) {
   const [action, id] = interaction.customId.split(':');
   const ev = load().events[id];
   if (!ev) return interaction.reply({ content: 'That meetup no longer exists.', flags: MessageFlags.Ephemeral });
-  if (!canManage(interaction, ev)) return interaction.reply({ content: 'You cannot edit this meetup.', flags: MessageFlags.Ephemeral });
+  const manager = canManage(interaction, ev);
+  if (action === 'meetup_guestsubmit') {
+    if (ev.cancelled && !manager) return interaction.reply({ content: 'This meetup was cancelled.', flags: MessageFlags.Ephemeral });
+    return handleGuestsSubmit(interaction, ev, manager);
+  }
+  if (!manager) return interaction.reply({ content: 'You cannot edit this meetup.', flags: MessageFlags.Ephemeral });
   if (action === 'meetup_editsubmit') return handleEditSubmit(interaction, ev);
-  if (action === 'meetup_guestsubmit') return handleGuestsSubmit(interaction, ev);
 }
 
 // ----------------------------------------------------------- reminders ----
